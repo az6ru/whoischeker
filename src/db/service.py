@@ -263,48 +263,45 @@ class DatabaseService:
                 logger.warning(f"Домен с ID {domain_id} не найден")
                 return None
 
-            # Получаем время последней записи
+            # Получаем все уникальные типы записей для домена
             result = await session.execute(
-                select(DNSRecord.created_at)
+                select(DNSRecord.record_type)
                 .where(DNSRecord.domain_id == domain_id)
-                .order_by(DNSRecord.created_at.desc())
-                .limit(1)
+                .distinct()
             )
-            last_time = result.scalar_one_or_none()
+            record_types = [r[0] for r in result.all()]
             
-            if not last_time:
+            if not record_types:
                 logger.warning(f"Не найдено DNS записей для домена {domain.name}")
                 return None
 
-            # Получаем все записи за последнее время
-            result = await session.execute(
-                select(DNSRecord)
-                .where(
-                    DNSRecord.domain_id == domain_id,
-                    DNSRecord.created_at == last_time,
-                )
-            )
-            records = list(result.scalars().all())
-
-            if not records:
-                logger.warning(f"Не найдено DNS записей для домена {domain.name} на время {last_time}")
-                return None
-
-            # Преобразуем записи в DNSInfo
-            dns_info = DNSInfo(domain.name)  # Используем имя из предзагруженного домена
-            logger.debug(f"Найдено {len(records)} DNS записей для домена {domain.name}")
+            # Создаем объект DNS информации
+            dns_info = DNSInfo(domain.name)
             
-            for record in records:
-                try:
-                    values = json.loads(record.values)
-                    logger.debug(f"Загружена DNS запись {record.record_type}: {values}, TTL={record.ttl}")
-                    dns_info.add_record(
-                        record.record_type,
-                        values,
-                        record.ttl or 0
+            # Для каждого типа записи получаем последнюю запись
+            for record_type in record_types:
+                result = await session.execute(
+                    select(DNSRecord)
+                    .where(
+                        DNSRecord.domain_id == domain_id,
+                        DNSRecord.record_type == record_type
                     )
-                except Exception as e:
-                    logger.error(f"Ошибка при десериализации DNS записи {record.record_type}: {e}")
+                    .order_by(DNSRecord.created_at.desc())
+                    .limit(1)
+                )
+                record = result.scalar_one_or_none()
+                
+                if record:
+                    try:
+                        values = json.loads(record.values)
+                        logger.debug(f"Загружена DNS запись {record_type}: {values}, TTL={record.ttl}")
+                        dns_info.add_record(
+                            record_type,
+                            values,
+                            record.ttl or 0
+                        )
+                    except Exception as e:
+                        logger.error(f"Ошибка при десериализации DNS записи {record_type}: {e}")
             
             logger.debug(f"Типы DNS записей в объекте: {list(dns_info.records.keys())}")
             return dns_info 

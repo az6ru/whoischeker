@@ -4,6 +4,7 @@ import asyncio
 import logging
 from typing import Dict, Optional
 from datetime import datetime, timedelta
+import json
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
@@ -403,74 +404,74 @@ class WhoisCheckerBot:
             return
         
         # Получаем последнюю WHOIS запись
-        whois = await self.db.get_last_whois_record(domain.id)
+        whois_record = await self.db.get_last_whois_record(domain_id)
         
-        if whois:
-            # Форматируем информацию о регистраторе
-            registrar_info = whois.registrar if whois.registrar else "Нет данных"
-            if whois.registrar_url:
-                registrar_info += f" ({whois.registrar_url})"
-            
-            # Форматируем статусы
-            if isinstance(whois.status, list) and whois.status:
-                status_details = ", ".join(whois.status)
-            elif isinstance(whois.status, str) and whois.status:
-                status_details = whois.status
-            else:
-                status_details = "Нет данных"
-            
-            # Форматируем сроки регистрации
-            creation_date = (
-                whois.creation_date.strftime("%d.%m.%Y")
-                if whois.creation_date
-                else "Нет данных"
-            )
-            
-            expiration_date = (
-                whois.expiration_date.strftime("%d.%m.%Y")
-                if whois.expiration_date
-                else "Нет данных"
-            )
-            
-            last_updated = (
-                whois.last_updated.strftime("%d.%m.%Y")
-                if whois.last_updated
-                else "Нет данных"
-            )
-            
-            # Форматируем информацию о владельце
-            owner_info = whois.owner if whois.owner else "Нет данных"
-            
-            # Форматируем DNS серверы
-            nameservers = ", ".join(whois.name_servers) if whois.name_servers else "Нет данных"
-            
-            # Форматируем контакты
-            admin_contact = whois.admin_contact if whois.admin_contact else "Нет данных"
-            tech_contact = whois.tech_contact if whois.tech_contact else "Нет данных"
-            
-            # Форматируем техническую информацию
-            whois_server = whois.whois_server if whois.whois_server else "Нет данных"
-            dnssec = whois.dnssec if whois.dnssec else "Нет данных"
-            
+        if whois_record:
             # Формируем сообщение с WHOIS информацией
-            whois_info = [
-                f"📝 *WHOIS информация для домена {domain.name}*\n",
-                f"*Регистратор:* {registrar_info}",
-                f"*Статус:* {status_details}",
-                f"*Владелец:* {owner_info}",
-                f"*Дата создания:* {creation_date}",
-                f"*Дата обновления:* {last_updated}",
-                f"*Срок регистрации до:* {expiration_date}",
-                f"*NS серверы:* {nameservers}",
-                f"*Административный контакт:* {admin_contact}",
-                f"*Технический контакт:* {tech_contact}",
-                f"*WHOIS сервер:* {whois_server}",
-                f"*DNSSEC:* {dnssec}",
-                f"*Последняя проверка:* {whois.created_at.strftime('%d.%m.%Y %H:%M:%S')}",
-            ]
+            whois_info = [f"📄 *WHOIS-информация для домена: {domain.name}*\n"]
+            
+            # Регистратор
+            if whois_record.registrar:
+                whois_info.append(f"🏢 *Регистратор:* {whois_record.registrar}")
+                if whois_record.registrar_url:
+                    whois_info.append(f"🔗 {whois_record.registrar_url}")
+                whois_info.append("")
+            
+            # Статус
+            if whois_record.status:
+                status_list = json.loads(whois_record.status) if isinstance(whois_record.status, str) else whois_record.status
+                if status_list:
+                    whois_info.append("📌 *Статус:*")
+                    for status in status_list:
+                        whois_info.append(f"• {status}")
+                    # Добавляем ссылки на описания статусов
+                    for status in status_list:
+                        if "clientTransferProhibited" in status:
+                            whois_info.append("🔗 https://icann.org/epp#clientTransferProhibited")
+                        elif "pendingDelete" in status:
+                            whois_info.append("🔗 https://icann.org/epp#pendingDelete")
+                    whois_info.append("")
+            
+            # Даты
+            dates_info = []
+            if whois_record.creation_date:
+                dates_info.append(f"• Создан: {whois_record.creation_date.strftime('%d.%m.%Y')}")
+            if hasattr(whois_record, 'last_updated') and whois_record.last_updated:
+                dates_info.append(f"• Обновлён: {whois_record.last_updated.strftime('%d.%m.%Y')}")
+            if whois_record.expiration_date:
+                dates_info.append(f"• Срок окончания: {whois_record.expiration_date.strftime('%d.%m.%Y')}")
+            
+            if dates_info:
+                whois_info.append("📅 *Даты:*")
+                whois_info.extend(dates_info)
+                whois_info.append("")
+            
+            # Контактная информация
+            whois_info.append(f"🧾 *Владелец:* {whois_record.owner or '—'}")
+            whois_info.append(f"👤 *Админ. контакт:* {whois_record.admin_contact or '—'}")
+            whois_info.append(f"🛠️ *Тех. контакт:* {whois_record.tech_contact or '—'}")
+            whois_info.append("")
+            
+            # Серверы имен
+            if whois_record.name_servers:
+                ns_list = json.loads(whois_record.name_servers) if isinstance(whois_record.name_servers, str) else whois_record.name_servers
+                if ns_list:
+                    whois_info.append("🛰 *NS-серверы:*")
+                    for ns in ns_list:
+                        whois_info.append(f"• {ns}")
+                    whois_info.append("")
+            
+            # Дополнительная информация
+            whois_info.append(f"🔍 *WHOIS-сервер:* {whois_record.whois_server or '—'}")
+            whois_info.append(f"🔐 *DNSSEC:* {whois_record.dnssec or 'unsigned'}")
+            whois_info.append("")
+            
+            # Время проверки
+            if hasattr(whois_record, 'created_at') and whois_record.created_at:
+                whois_info.append(f"🕒 *Последняя проверка:* {whois_record.created_at.strftime('%d.%m.%Y %H:%M:%S')}")
         else:
             whois_info = [
-                f"📝 *WHOIS информация для домена {domain.name}*\n",
+                f"📄 *WHOIS-информация для домена {domain.name}*\n",
                 "Нет данных WHOIS. Возможно, домен еще не проверялся."
             ]
         
@@ -524,17 +525,46 @@ class WhoisCheckerBot:
             
             logger.debug(f"Найдено {len(latest_records)} уникальных типов DNS записей")
             
-            # Формируем сообщение с DNS записями
-            dns_info = [f"🌐 *DNS записи для домена {domain.name}*\n"]
+            # Формируем сообщение с DNS записями в новом формате
+            dns_info = [f"🌐 *DNS-записи для домена: {domain.name}*\n"]
             
             # Стандартные типы DNS записей, которые мы всегда хотим показать
-            standard_record_types = ["A", "AAAA", "MX", "NS", "CNAME", "TXT", "SOA", "SRV", "PTR"]
+            standard_record_types = ["A", "AAAA", "MX", "NS", "SOA", "TXT", "CNAME", "PTR", "SRV"]
+            
+            # Иконки для разных типов записей
+            record_icons = {
+                "A": "📍",
+                "AAAA": "📍",
+                "MX": "📬",
+                "NS": "🔒",
+                "SOA": "📄",
+                "TXT": "📥",
+                "CNAME": "🔁",
+                "PTR": "📌",
+                "SRV": "📦"
+            }
+            
+            # Названия для разных типов записей
+            record_names = {
+                "A": "A-запись",
+                "AAAA": "AAAA-запись",
+                "MX": "MX-записи",
+                "NS": "NS-серверы",
+                "SOA": "SOA-запись",
+                "TXT": "TXT-записи",
+                "CNAME": "CNAME",
+                "PTR": "PTR",
+                "SRV": "SRV"
+            }
             
             # Объединяем стандартные типы и имеющиеся типы
             all_record_types = list(set(standard_record_types) | set(latest_records.keys()))
             all_record_types.sort()  # Сортируем для единообразия отображения
             
             for record_type in all_record_types:
+                icon = record_icons.get(record_type, "🔹")
+                name = record_names.get(record_type, f"{record_type}-запись")
+                
                 if record_type in latest_records:
                     record = latest_records[record_type]
                     try:
@@ -544,28 +574,28 @@ class WhoisCheckerBot:
                         
                         logger.debug(f"Обработка записи {record_type}: {values}, TTL={ttl}")
                         
-                        dns_info.append(f"*Запись {record_type}:*")
+                        dns_info.append(f"{icon} *{name}:*")
                         if values:
                             for value in values:
                                 # Экранируем специальные символы Markdown
                                 escaped_value = value.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
-                                dns_info.append(f"  • {escaped_value}")
-                            dns_info.append(f"  TTL: {ttl}\n")
+                                dns_info.append(f"• {escaped_value} (TTL: {ttl})")
+                            dns_info.append("")
                         else:
-                            dns_info.append("  • Нет данных\n")
+                            dns_info.append("• ❌ Нет данных\n")
                     except Exception as e:
                         logger.error(f"Ошибка при обработке записи {record_type}: {e}")
-                        dns_info.append(f"*Запись {record_type}:*")
-                        dns_info.append(f"  • Ошибка обработки: {e}\n")
+                        dns_info.append(f"{icon} *{name}:*")
+                        dns_info.append(f"• ⚠️ Ошибка обработки: {e}\n")
                 else:
                     logger.debug(f"Запись {record_type} не найдена")
                     # Показываем отсутствующие типы записей
-                    dns_info.append(f"*Запись {record_type}:*")
-                    dns_info.append("  • Не найдена\n")
+                    dns_info.append(f"{icon} *{name}:*")
+                    dns_info.append("• ❌ Не найдена\n")
             
             # Получаем текущее время для отображения времени проверки
             current_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-            dns_info.append(f"*Последняя проверка:* {current_time}")
+            dns_info.append(f"🕒 *Последняя проверка:* {current_time}")
             
             # Создаем кнопку "Назад"
             keyboard = types.InlineKeyboardMarkup(

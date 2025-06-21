@@ -136,10 +136,24 @@ def compare_dns_records(
 
     # Если это первая проверка
     if not old_info:
-        return []
+        # Для первой проверки считаем, что все записи новые
+        for record_type, record in new_info.records.items():
+            changes.append(
+                DNSChange(
+                    record_type=record_type,
+                    old_values=[],
+                    new_values=sorted(record.values) if record.values else [],
+                )
+            )
+        return changes
 
     # Сравниваем записи каждого типа
     all_types = set(old_info.records.keys()) | set(new_info.records.keys())
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Сравнение DNS записей: старые типы: {set(old_info.records.keys())}, новые типы: {set(new_info.records.keys())}")
+    
     for record_type in all_types:
         old_record = old_info.records.get(record_type)
         new_record = new_info.records.get(record_type)
@@ -147,14 +161,20 @@ def compare_dns_records(
         old_values = set(old_record.values) if old_record else set()
         new_values = set(new_record.values) if new_record else set()
 
+        # Логируем значения для отладки
+        logger.debug(f"Тип записи {record_type}: старые значения: {old_values}, новые значения: {new_values}")
+        
+        # Проверяем, действительно ли есть изменения
         if old_values != new_values:
-            changes.append(
-                DNSChange(
-                    record_type=record_type,
-                    old_values=sorted(old_values) if old_values else [],
-                    new_values=sorted(new_values) if new_values else [],
+            # Добавляем только если значения реально отличаются
+            if not (not old_values and not new_values):  # Пропускаем случай, когда оба множества пустые
+                changes.append(
+                    DNSChange(
+                        record_type=record_type,
+                        old_values=sorted(old_values) if old_values else [],
+                        new_values=sorted(new_values) if new_values else [],
+                    )
                 )
-            )
 
     return changes
 
@@ -170,13 +190,17 @@ def format_changes_message(changes: DomainChanges) -> str:
         str: Отформатированное сообщение
     """
     lines = [
-        f"🔔 *Обнаружены изменения для домена {changes.domain.name}*\n"
-        f"_Время проверки: {changes.check_time.strftime('%d.%m.%Y %H:%M:%S')}_\n"
+        f"🔔 *Обнаружены изменения в DNS-домене: {changes.domain.name}*\n"
+        f"📅 *Время проверки:* {changes.check_time.strftime('%d.%m.%Y %H:%M:%S')}\n"
     ]
+
+    # Добавляем заголовок для изменений, если они есть
+    if changes.whois_changes or changes.dns_changes:
+        lines.append("📌 *Изменения:*\n")
 
     # Форматируем WHOIS изменения
     if changes.whois_changes:
-        lines.append("\n📝 *Изменения в WHOIS:*")
+        lines.append("📄 *WHOIS-информация:*")
         for change in changes.whois_changes:
             # Специальная обработка для слишком длинных значений
             old_value = change.old_value
@@ -190,29 +214,78 @@ def format_changes_message(changes: DomainChanges) -> str:
                 
             lines.append(
                 f"• *{change.field}*:\n"
-                f"  - Было: {old_value}\n"
-                f"  - Стало: {new_value}"
+                f"  Было: {old_value}\n"
+                f"  Стало: {new_value}\n"
             )
 
     # Форматируем DNS изменения
     if changes.dns_changes:
-        lines.append("\n🌐 *Изменения в DNS записях:*")
+        # Иконки для разных типов изменений
+        change_icons = {
+            "add": "🆕",
+            "remove": "❌",
+            "update": "✏️"
+        }
+        
+        # Названия для разных типов записей
+        record_names = {
+            "A": "A-запись",
+            "AAAA": "AAAA-запись",
+            "MX": "MX-записи",
+            "NS": "NS-записи",
+            "SOA": "SOA-запись",
+            "TXT": "TXT-запись",
+            "CNAME": "CNAME-запись",
+            "PTR": "PTR-запись",
+            "SRV": "SRV-запись"
+        }
+        
         for change in changes.dns_changes:
             # Для DNS-записей определяем тип изменения
             if not change.old_values and change.new_values:
-                change_type = "➕ Добавлена запись"
+                change_type = "add"
+                change_desc = "добавлена"
             elif change.old_values and not change.new_values:
-                change_type = "❌ Удалена запись"
+                change_type = "remove"
+                change_desc = "удалена"
             else:
-                change_type = "✏️ Изменена запись"
+                change_type = "update"
+                change_desc = "обновлена"
                 
+            icon = change_icons.get(change_type, "🔄")
+            name = record_names.get(change.record_type, f"{change.record_type}-запись")
+            
             lines.append(
-                f"• *{change_type} {change.record_type}*:\n"
-                f"  - Было: {', '.join(change.old_values) if change.old_values else '(пусто)'}\n"
-                f"  - Стало: {', '.join(change.new_values) if change.new_values else '(пусто)'}"
+                f"{icon} *{name} {change_desc}:*"
             )
+            
+            # Форматируем старые значения
+            if change.old_values:
+                lines.append("  Было:")
+                for value in change.old_values:
+                    lines.append(f"  • {value}")
+            else:
+                lines.append("  Было: —")
+            
+            # Форматируем новые значения
+            if change.new_values:
+                lines.append("  Стало:")
+                for value in change.new_values:
+                    # Для TXT записей с идентификаторами выделяем их
+                    if change.record_type == "TXT" and ("id:" in value.lower() or "uuid" in value.lower() or "v=spf" in value.lower()):
+                        lines.append(f"  ➤ {value}")
+                        # Если есть идентификатор, выделяем его
+                        if "id:" in value.lower():
+                            id_part = value.split("id:")[1].strip().split()[0].strip('"\'')
+                            lines.append(f"  🔑 ID: {id_part}")
+                    else:
+                        lines.append(f"  • {value}")
+            else:
+                lines.append("  Стало: —")
+            
+            lines.append("")  # Пустая строка между изменениями
 
     # Добавляем справочную информацию
-    lines.append("\n💡 Используйте команду /status для просмотра полной информации о домене.")
+    lines.append("💡 Используйте команду `/status` для просмотра полной информации.")
 
     return "\n".join(lines) 

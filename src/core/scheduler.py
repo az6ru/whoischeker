@@ -110,11 +110,17 @@ class DomainCheckScheduler:
         Args:
             domain: Объект домена
         """
+        # Флаг первой проверки
+        first_check = True
+        
         while not self._stop_event.is_set():
             try:
                 # Получаем последние записи
                 last_whois = await self.db.get_last_whois_record(domain.id)
                 last_dns_records = await self.db.get_last_dns_records(domain.id)
+                
+                # Определяем, первая ли это проверка
+                is_first_check = last_whois is None or last_dns_records is None
 
                 # Получаем новые данные
                 new_whois = await self.whois_checker.get_whois_info(domain.name)
@@ -124,21 +130,24 @@ class DomainCheckScheduler:
                 await self.db.save_whois_record(domain.id, new_whois)
                 await self.db.save_dns_records(domain.id, new_dns_records)
 
-                # Проверяем изменения
-                whois_changes = compare_whois_records(last_whois, new_whois)
-                dns_changes = compare_dns_records(last_dns_records, new_dns_records)
+                # Проверяем изменения только если это не первая проверка
+                if not is_first_check:
+                    whois_changes = compare_whois_records(last_whois, new_whois)
+                    dns_changes = compare_dns_records(last_dns_records, new_dns_records)
 
-                # Если есть изменения, отправляем уведомление
-                if whois_changes or dns_changes:
-                    changes = DomainChanges(
-                        domain=domain,
-                        whois_changes=whois_changes,
-                        dns_changes=dns_changes,
-                        check_time=datetime.now(),
-                    )
-                    message = format_changes_message(changes)
-                    await self.notify_callback(domain.chat_id, message)
-                    logger.info(f"Обнаружены изменения для домена {domain.name}")
+                    # Если есть изменения, отправляем уведомление
+                    if whois_changes or dns_changes:
+                        changes = DomainChanges(
+                            domain=domain,
+                            whois_changes=whois_changes,
+                            dns_changes=dns_changes,
+                            check_time=datetime.now(),
+                        )
+                        message = format_changes_message(changes)
+                        await self.notify_callback(domain.chat_id, message)
+                        logger.info(f"Обнаружены изменения для домена {domain.name}")
+                else:
+                    logger.info(f"Первая проверка домена {domain.name}, уведомления не отправляются")
 
             except Exception as e:
                 logger.error(f"Ошибка при проверке домена {domain.name}: {e}")
