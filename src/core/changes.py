@@ -57,18 +57,27 @@ def compare_whois_records(
     # Поля для сравнения и их человекочитаемые названия
     fields_to_compare = {
         "registrar": "Регистратор",
+        "registrar_url": "URL регистратора",
         "creation_date": "Дата создания",
         "expiration_date": "Дата истечения",
         "last_updated": "Дата обновления",
         "status": "Статус",
         "name_servers": "Серверы имен",
+        "emails": "Email контакты",
+        "owner": "Владелец",
+        "admin_contact": "Административный контакт",
+        "tech_contact": "Технический контакт",
+        "address": "Адрес",
+        "phone": "Телефон",
+        "dnssec": "DNSSEC",
+        "whois_server": "WHOIS сервер",
     }
 
     for field, display_name in fields_to_compare.items():
         old_value = getattr(old_record, field)
         new_value = getattr(new_record, field)
 
-        # Пропускаем None значения
+        # Пропускаем None значения, только если оба значения None
         if old_value is None and new_value is None:
             continue
 
@@ -161,7 +170,7 @@ def format_changes_message(changes: DomainChanges) -> str:
         str: Отформатированное сообщение
     """
     lines = [
-        f"🔔 Обнаружены изменения для домена *{changes.domain.name}*\n"
+        f"🔔 *Обнаружены изменения для домена {changes.domain.name}*\n"
         f"_Время проверки: {changes.check_time.strftime('%d.%m.%Y %H:%M:%S')}_\n"
     ]
 
@@ -169,20 +178,41 @@ def format_changes_message(changes: DomainChanges) -> str:
     if changes.whois_changes:
         lines.append("\n📝 *Изменения в WHOIS:*")
         for change in changes.whois_changes:
+            # Специальная обработка для слишком длинных значений
+            old_value = change.old_value
+            new_value = change.new_value
+            
+            # Ограничиваем длину для слишком длинных значений
+            if len(old_value) > 100:
+                old_value = old_value[:97] + "..."
+            if len(new_value) > 100:
+                new_value = new_value[:97] + "..."
+                
             lines.append(
-                f"• {change.field}:\n"
-                f"  - Было: {change.old_value}\n"
-                f"  - Стало: {change.new_value}"
+                f"• *{change.field}*:\n"
+                f"  - Было: {old_value}\n"
+                f"  - Стало: {new_value}"
             )
 
     # Форматируем DNS изменения
     if changes.dns_changes:
         lines.append("\n🌐 *Изменения в DNS записях:*")
         for change in changes.dns_changes:
+            # Для DNS-записей определяем тип изменения
+            if not change.old_values and change.new_values:
+                change_type = "➕ Добавлена запись"
+            elif change.old_values and not change.new_values:
+                change_type = "❌ Удалена запись"
+            else:
+                change_type = "✏️ Изменена запись"
+                
             lines.append(
-                f"• Запись {change.record_type}:\n"
+                f"• *{change_type} {change.record_type}*:\n"
                 f"  - Было: {', '.join(change.old_values) if change.old_values else '(пусто)'}\n"
                 f"  - Стало: {', '.join(change.new_values) if change.new_values else '(пусто)'}"
             )
+
+    # Добавляем справочную информацию
+    lines.append("\n💡 Используйте команду /status для просмотра полной информации о домене.")
 
     return "\n".join(lines) 

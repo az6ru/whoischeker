@@ -50,11 +50,20 @@ class WhoisRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     domain_id: Mapped[int] = mapped_column(ForeignKey("domains.id"))
     registrar: Mapped[Optional[str]] = mapped_column(String(255))
+    registrar_url: Mapped[Optional[str]] = mapped_column(String(255))
     creation_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
     expiration_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
     updated_date: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    status: Mapped[Optional[str]] = mapped_column(String(255))
-    name_servers: Mapped[Optional[List[str]]] = mapped_column(Text)
+    status: Mapped[Optional[str]] = mapped_column(String(512))
+    name_servers: Mapped[Optional[str]] = mapped_column(Text)
+    emails: Mapped[Optional[str]] = mapped_column(Text)
+    owner: Mapped[Optional[str]] = mapped_column(String(255))
+    admin_contact: Mapped[Optional[str]] = mapped_column(String(255))
+    tech_contact: Mapped[Optional[str]] = mapped_column(String(255))
+    address: Mapped[Optional[str]] = mapped_column(String(512))
+    phone: Mapped[Optional[str]] = mapped_column(String(255))
+    dnssec: Mapped[Optional[str]] = mapped_column(String(255))
+    whois_server: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         default=datetime.now,

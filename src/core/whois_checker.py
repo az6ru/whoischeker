@@ -21,6 +21,14 @@ class WhoisInfo:
     name_servers: Optional[list[str]] = None
     status: Optional[list[str]] = None
     emails: Optional[list[str]] = None
+    registrar_url: Optional[str] = None
+    owner: Optional[str] = None  # Владелец домена
+    admin_contact: Optional[str] = None  # Административный контакт
+    tech_contact: Optional[str] = None  # Технический контакт
+    address: Optional[str] = None  # Адрес владельца
+    phone: Optional[str] = None  # Телефон
+    dnssec: Optional[str] = None  # Статус DNSSEC
+    whois_server: Optional[str] = None  # WHOIS сервер
     raw: Optional[str] = None
     created_at: Optional[datetime] = None  # Время создания записи в БД
 
@@ -68,6 +76,16 @@ class WhoisInfo:
             status = list(status)
         else:
             status = []
+            
+        # Обработка контактов и другой информации
+        owner = entry.get('registrant_name') or entry.get('org') or None
+        admin_contact = entry.get('admin_email') or None
+        tech_contact = entry.get('tech_email') or None
+        address = entry.get('address') or None
+        phone = entry.get('phone') or entry.get('registrant_phone') or None
+        dnssec = entry.get('dnssec') or None
+        registrar_url = entry.get('registrar_url') or None
+        whois_server = entry.get('whois_server') or None
 
         return cls(
             domain_name=domain,
@@ -78,6 +96,14 @@ class WhoisInfo:
             name_servers=name_servers,
             status=status,
             emails=entry.get('emails', []),
+            registrar_url=registrar_url,
+            owner=owner,
+            admin_contact=admin_contact,
+            tech_contact=tech_contact,
+            address=address,
+            phone=phone,
+            dnssec=dnssec,
+            whois_server=whois_server,
             raw=str(entry),
             created_at=datetime.now(),
         )
@@ -98,6 +124,14 @@ class WhoisInfo:
             "name_servers": self.name_servers,
             "status": self.status,
             "emails": self.emails,
+            "registrar_url": self.registrar_url,
+            "owner": self.owner,
+            "admin_contact": self.admin_contact,
+            "tech_contact": self.tech_contact,
+            "address": self.address,
+            "phone": self.phone,
+            "dnssec": self.dnssec,
+            "whois_server": self.whois_server,
             "raw": self.raw,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -172,12 +206,20 @@ class WhoisChecker:
         changes = {}
         fields = [
             "registrar",
+            "registrar_url",
             "creation_date",
             "expiration_date",
             "last_updated",
             "name_servers",
             "status",
             "emails",
+            "owner",
+            "admin_contact",
+            "tech_contact", 
+            "address",
+            "phone",
+            "dnssec",
+            "whois_server",
         ]
 
         for field in fields:

@@ -83,7 +83,7 @@ class DNSChecker:
             self.resolver.nameservers = nameservers
             
         self.resolver.timeout = timeout
-        self.record_types = record_types or ["A", "AAAA", "MX", "NS", "TXT", "CNAME"]
+        self.record_types = record_types or ["A", "AAAA", "MX", "NS", "TXT", "CNAME", "PTR", "SOA", "SRV"]
 
     async def _query_record(
         self, domain: str, record_type: str
@@ -99,13 +99,52 @@ class DNSChecker:
             Union[Answer, NoAnswer, NXDOMAIN, None]: Результат запроса
         """
         try:
-            # Выполняем DNS-запрос в отдельном потоке
+            # Для PTR записей нужна специальная обработка
+            if record_type == "PTR":
+                # Для PTR записей нужно сначала получить IP адрес домена
+                try:
+                    # Запрашиваем A записи напрямую, чтобы избежать рекурсии
+                    a_answer = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: self.resolver.resolve(domain, "A")
+                    )
+                    
+                    if a_answer:
+                        # Получаем IP адреса из A записей
+                        ip_addresses = [str(r) for r in a_answer]
+                        
+                        for ip in ip_addresses:
+                            try:
+                                # Преобразуем IP в формат для обратного DNS
+                                ip_parts = ip.split('.')
+                                ptr_name = f"{ip_parts[3]}.{ip_parts[2]}.{ip_parts[1]}.{ip_parts[0]}.in-addr.arpa"
+                                
+                                # Запрашиваем PTR запись
+                                ptr_record = await asyncio.get_event_loop().run_in_executor(
+                                    None, lambda: self.resolver.resolve(ptr_name, "PTR")
+                                )
+                                if ptr_record:
+                                    return ptr_record
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).debug(f"Не удалось получить PTR запись для IP {ip}: {e}")
+                                continue
+                        
+                        # Если ни для одного IP не удалось получить PTR запись
+                        return None
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Ошибка при получении PTR записи для {domain}: {e}")
+                    return None
+            
+            # Выполняем DNS-запрос в отдельном потоке для остальных типов записей
             return await asyncio.get_event_loop().run_in_executor(
                 None, lambda: self.resolver.resolve(domain, record_type)
             )
         except (NoAnswer, NXDOMAIN):
             return None
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Ошибка при запросе {record_type} для {domain}: {e}")
             return None
 
     async def get_dns_info(self, domain: str) -> DNSInfo:

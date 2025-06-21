@@ -1,8 +1,10 @@
 """Модуль для управления миграциями базы данных."""
 
 import logging
+import os
+import re
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 from alembic import command
 from alembic.config import Config
@@ -30,6 +32,9 @@ class DatabaseMigrator:
         # Путь к директории с миграциями
         self.migrations_dir = Path(__file__).parent / "migrations"
         self.migrations_dir.mkdir(exist_ok=True)
+        
+        # Путь к директории с SQL миграциями
+        self.sql_migrations_dir = Path("config/migrations")
         
         # Путь к файлу конфигурации alembic
         self.alembic_cfg = Config()
@@ -129,6 +134,87 @@ class DatabaseMigrator:
         except Exception as e:
             logger.error(f"Ошибка при откате миграции: {e}")
             raise
+        
+    async def check_sql_migrations(self) -> List[Tuple[int, str, Path]]:
+        """
+        Проверка наличия SQL миграций.
+        
+        Returns:
+            List[Tuple[int, str, Path]]: Список кортежей (номер миграции, имя миграции, путь к файлу)
+        """
+        migrations = []
+        
+        if not self.sql_migrations_dir.exists():
+            return migrations
+        
+        # Проверяем таблицу для хранения выполненных SQL миграций
+        with self.engine.connect() as conn:
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS sql_migrations ("
+                "id INTEGER PRIMARY KEY, "
+                "name TEXT NOT NULL, "
+                "applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            ))
+            conn.commit()
+            
+            # Получаем список выполненных миграций
+            result = conn.execute(text("SELECT id FROM sql_migrations"))
+            executed_migrations = {row[0] for row in result}
+        
+        # Получаем список файлов миграций
+        pattern = re.compile(r"^(\d+)_(.+)\.sql$")
+        
+        for file in self.sql_migrations_dir.glob("*.sql"):
+            match = pattern.match(file.name)
+            if match:
+                migration_id = int(match.group(1))
+                migration_name = match.group(2)
+                
+                # Проверяем, выполнялась ли эта миграция ранее
+                if migration_id not in executed_migrations:
+                    migrations.append((migration_id, migration_name, file))
+        
+        # Сортируем миграции по номеру
+        migrations.sort(key=lambda x: x[0])
+        return migrations
+
+    async def apply_sql_migrations(self):
+        """Применение всех SQL миграций."""
+        pending_migrations = await self.check_sql_migrations()
+        
+        if not pending_migrations:
+            logger.info("Нет ожидающих SQL миграций")
+            return
+        
+        logger.info(f"Найдено {len(pending_migrations)} SQL миграций для выполнения")
+        
+        for migration_id, migration_name, file_path in pending_migrations:
+            try:
+                # Читаем SQL из файла
+                with open(file_path, "r", encoding="utf-8") as f:
+                    sql = f.read()
+                
+                logger.info(f"Применение SQL миграции {migration_id}: {migration_name}")
+                
+                # Выполняем SQL
+                with self.engine.connect() as conn:
+                    # Разделяем SQL на отдельные команды
+                    for stmt in sql.split(";"):
+                        if stmt.strip():
+                            conn.execute(text(stmt))
+                    
+                    # Отмечаем миграцию как выполненную
+                    conn.execute(
+                        text("INSERT INTO sql_migrations (id, name) VALUES (:id, :name)"),
+                        {"id": migration_id, "name": migration_name}
+                    )
+                    conn.commit()
+                
+                logger.info(f"SQL миграция {migration_id}: {migration_name} успешно применена")
+                
+            except Exception as e:
+                logger.error(f"Ошибка при применении SQL миграции {migration_id}: {e}")
+                raise
 
 
 async def setup_database():
@@ -146,7 +232,10 @@ async def setup_database():
             logger.info(f"Найдено {len(pending)} ожидающих миграций")
             await migrator.apply_migrations()
         else:
-            logger.info("Ожидающих миграций нет")
+            logger.info("Ожидающих Alembic миграций нет")
+        
+        # Применяем SQL миграции
+        await migrator.apply_sql_migrations()
             
     except Exception as e:
         logger.error(f"Ошибка при настройке базы данных: {e}")

@@ -89,6 +89,19 @@ class DatabaseService:
             )
             return result.scalar_one_or_none()
 
+    async def get_domain_by_id(self, domain_id: int) -> Optional[Domain]:
+        """
+        Получение домена по ID.
+
+        Args:
+            domain_id: ID домена
+
+        Returns:
+            Optional[Domain]: Найденный домен или None
+        """
+        async with self.async_session() as session:
+            return await session.get(Domain, domain_id)
+
     async def get_domains_by_chat(self, chat_id: int) -> List[Domain]:
         """
         Получение списка доменов пользователя.
@@ -143,11 +156,20 @@ class DatabaseService:
             record = WhoisRecord(
                 domain_id=domain_id,
                 registrar=whois_info.registrar,
+                registrar_url=whois_info.registrar_url,
                 creation_date=whois_info.creation_date,
                 expiration_date=whois_info.expiration_date,
                 updated_date=whois_info.last_updated,
                 status=json.dumps(whois_info.status) if whois_info.status else None,
                 name_servers=json.dumps(whois_info.name_servers) if whois_info.name_servers else None,
+                emails=json.dumps(whois_info.emails) if whois_info.emails else None,
+                owner=whois_info.owner,
+                admin_contact=whois_info.admin_contact,
+                tech_contact=whois_info.tech_contact,
+                address=whois_info.address,
+                phone=whois_info.phone,
+                dnssec=whois_info.dnssec,
+                whois_server=whois_info.whois_server,
                 created_at=datetime.now(),
             )
             session.add(record)
@@ -207,11 +229,20 @@ class DatabaseService:
             return WhoisInfo(
                 domain_name=domain.name,  # Используем имя из предзагруженного домена
                 registrar=record.registrar,
+                registrar_url=record.registrar_url,
                 creation_date=record.creation_date,
                 expiration_date=record.expiration_date,
                 last_updated=record.updated_date,
                 status=json.loads(record.status) if record.status else None,
                 name_servers=json.loads(record.name_servers) if record.name_servers else None,
+                emails=json.loads(record.emails) if record.emails else None,
+                owner=record.owner,
+                admin_contact=record.admin_contact,
+                tech_contact=record.tech_contact,
+                address=record.address,
+                phone=record.phone,
+                dnssec=record.dnssec,
+                whois_server=record.whois_server,
                 created_at=record.created_at,  # Добавляем время создания записи
             )
 
@@ -229,6 +260,7 @@ class DatabaseService:
             # Получаем домен для имени
             domain = await session.get(Domain, domain_id)
             if not domain:
+                logger.warning(f"Домен с ID {domain_id} не найден")
                 return None
 
             # Получаем время последней записи
@@ -241,6 +273,7 @@ class DatabaseService:
             last_time = result.scalar_one_or_none()
             
             if not last_time:
+                logger.warning(f"Не найдено DNS записей для домена {domain.name}")
                 return None
 
             # Получаем все записи за последнее время
@@ -254,14 +287,24 @@ class DatabaseService:
             records = list(result.scalars().all())
 
             if not records:
+                logger.warning(f"Не найдено DNS записей для домена {domain.name} на время {last_time}")
                 return None
 
             # Преобразуем записи в DNSInfo
             dns_info = DNSInfo(domain.name)  # Используем имя из предзагруженного домена
+            logger.debug(f"Найдено {len(records)} DNS записей для домена {domain.name}")
+            
             for record in records:
-                dns_info.add_record(
-                    record.record_type,
-                    json.loads(record.values),
-                    record.ttl or 0
-                )
+                try:
+                    values = json.loads(record.values)
+                    logger.debug(f"Загружена DNS запись {record.record_type}: {values}, TTL={record.ttl}")
+                    dns_info.add_record(
+                        record.record_type,
+                        values,
+                        record.ttl or 0
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при десериализации DNS записи {record.record_type}: {e}")
+            
+            logger.debug(f"Типы DNS записей в объекте: {list(dns_info.records.keys())}")
             return dns_info 

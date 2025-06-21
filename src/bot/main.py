@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from typing import Dict, Optional
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters.command import Command
@@ -19,7 +20,7 @@ from src.utils.validators import is_valid_domain
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -72,6 +73,13 @@ class WhoisCheckerBot:
             self.process_check_interval,
             DomainForm.waiting_for_interval,
         )
+        
+        # Обработчики callback-запросов
+        self.dp.callback_query.register(self.process_domain_delete, lambda c: c.data.startswith("delete_"))
+        self.dp.callback_query.register(self.process_domain_details, lambda c: c.data.startswith("details_"))
+        self.dp.callback_query.register(self.process_domain_dns, lambda c: c.data.startswith("dns_"))
+        self.dp.callback_query.register(self.process_domain_whois, lambda c: c.data.startswith("whois_"))
+        self.dp.callback_query.register(self.process_back_to_list, lambda c: c.data == "back_to_list")
 
     async def send_notification(self, chat_id: int, message: str):
         """
@@ -259,6 +267,23 @@ class WhoisCheckerBot:
             "Выберите домен для удаления:",
             reply_markup=keyboard,
         )
+        
+    async def process_domain_delete(self, callback_query: types.CallbackQuery):
+        """Обработчик удаления домена."""
+        domain_id = int(callback_query.data.split("_")[1])
+        
+        # Получаем информацию о домене
+        domain = await self.db.get_domain_by_id(domain_id)
+        if not domain:
+            await callback_query.answer("Домен не найден")
+            return
+        
+        # Удаляем домен из планировщика и БД
+        await self.scheduler.remove_domain(domain_id)
+        await self.db.delete_domain(domain_id)
+        
+        await callback_query.answer(f"Домен {domain.name} удален из отслеживания")
+        await callback_query.message.edit_text(f"✅ Домен {domain.name} удален из отслеживания")
 
     async def cmd_status(self, message: types.Message):
         """Обработчик команды /status."""
@@ -271,48 +296,340 @@ class WhoisCheckerBot:
             )
             return
 
-        status_message = ["📊 *Статус отслеживаемых доменов:*\n"]
-        
-        for domain in domains:
-            # Получаем последние записи
-            whois = await self.db.get_last_whois_record(domain.id)
-            
-            if whois:
-                last_check = whois.created_at.strftime("%d.%m.%Y %H:%M:%S")
-                # Проверяем статус домена
-                if isinstance(whois.status, list) and whois.status:
-                    status = "✅ Активен"
-                    status_details = ", ".join(whois.status)
-                elif isinstance(whois.status, str) and whois.status:
-                    status = "✅ Активен"
-                    status_details = whois.status
-                else:
-                    status = "❌ Неактивен"
-                    status_details = "Нет данных о статусе"
-                
-                expiration = (
-                    whois.expiration_date.strftime("%d.%m.%Y")
-                    if whois.expiration_date
-                    else "Нет данных"
-                )
-            else:
-                last_check = "Нет данных"
-                status = "❓ Неизвестно"
-                status_details = "Нет данных"
-                expiration = "Нет данных"
-
-            status_message.extend([
-                f"• *{domain.name}*",
-                f"  └ Статус: {status}",
-                f"  └ Детали статуса: {status_details}",
-                f"  └ Срок регистрации до: {expiration}",
-                f"  └ Последняя проверка: {last_check}\n",
-            ])
+        # Создаем клавиатуру с кнопками для каждого домена
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text=domain.name,
+                        callback_data=f"details_{domain.id}",
+                    )
+                ]
+                for domain in domains
+            ]
+        )
 
         await message.answer(
-            "\n".join(status_message),
+            "📊 *Выберите домен для просмотра подробной информации:*",
             parse_mode="Markdown",
+            reply_markup=keyboard,
         )
+        
+    async def process_domain_details(self, callback_query: types.CallbackQuery):
+        """Обработчик просмотра детальной информации о домене."""
+        domain_id = int(callback_query.data.split("_")[1])
+        
+        # Получаем информацию о домене
+        domain = await self.db.get_domain_by_id(domain_id)
+        if not domain:
+            await callback_query.answer("Домен не найден")
+            return
+        
+        # Получаем последнюю WHOIS запись
+        whois = await self.db.get_last_whois_record(domain_id)
+        
+        # Формируем базовую информацию о домене
+        if whois:
+            last_check = whois.created_at.strftime("%d.%m.%Y %H:%M:%S")
+            
+            # Проверяем статус домена
+            if isinstance(whois.status, list) and whois.status:
+                status = "✅ Активен"
+            elif isinstance(whois.status, str) and whois.status:
+                status = "✅ Активен"
+            else:
+                status = "❌ Неактивен"
+                
+            # Форматируем сроки регистрации
+            expiration_date = (
+                whois.expiration_date.strftime("%d.%m.%Y")
+                if whois.expiration_date
+                else "Нет данных"
+            )
+        else:
+            last_check = "Нет данных"
+            status = "❓ Неизвестно"
+            expiration_date = "Нет данных"
+        
+        # Создаем клавиатуру с кнопками для просмотра WHOIS и DNS
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="📝 WHOIS информация",
+                        callback_data=f"whois_{domain_id}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="🌐 DNS записи",
+                        callback_data=f"dns_{domain_id}",
+                    )
+                ],
+                [
+                    types.InlineKeyboardButton(
+                        text="« Назад к списку",
+                        callback_data="back_to_list",
+                    )
+                ],
+            ]
+        )
+        
+        # Формируем сообщение с основной информацией
+        message_text = (
+            f"📋 *Информация о домене {domain.name}*\n\n"
+            f"Статус: {status}\n"
+            f"Срок регистрации до: {expiration_date}\n"
+            f"Интервал проверки: {domain.check_interval // 3600} ч.\n"
+            f"Последняя проверка: {last_check}\n\n"
+            f"Выберите тип информации для просмотра:"
+        )
+        
+        await callback_query.message.edit_text(
+            message_text,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+        await callback_query.answer()
+        
+    async def process_domain_whois(self, callback_query: types.CallbackQuery):
+        """Обработчик просмотра WHOIS информации."""
+        domain_id = int(callback_query.data.split("_")[1])
+        
+        # Получаем информацию о домене
+        domain = await self.db.get_domain_by_id(domain_id)
+        if not domain:
+            await callback_query.answer("Домен не найден")
+            return
+        
+        # Получаем последнюю WHOIS запись
+        whois = await self.db.get_last_whois_record(domain.id)
+        
+        if whois:
+            # Форматируем информацию о регистраторе
+            registrar_info = whois.registrar if whois.registrar else "Нет данных"
+            if whois.registrar_url:
+                registrar_info += f" ({whois.registrar_url})"
+            
+            # Форматируем статусы
+            if isinstance(whois.status, list) and whois.status:
+                status_details = ", ".join(whois.status)
+            elif isinstance(whois.status, str) and whois.status:
+                status_details = whois.status
+            else:
+                status_details = "Нет данных"
+            
+            # Форматируем сроки регистрации
+            creation_date = (
+                whois.creation_date.strftime("%d.%m.%Y")
+                if whois.creation_date
+                else "Нет данных"
+            )
+            
+            expiration_date = (
+                whois.expiration_date.strftime("%d.%m.%Y")
+                if whois.expiration_date
+                else "Нет данных"
+            )
+            
+            last_updated = (
+                whois.last_updated.strftime("%d.%m.%Y")
+                if whois.last_updated
+                else "Нет данных"
+            )
+            
+            # Форматируем информацию о владельце
+            owner_info = whois.owner if whois.owner else "Нет данных"
+            
+            # Форматируем DNS серверы
+            nameservers = ", ".join(whois.name_servers) if whois.name_servers else "Нет данных"
+            
+            # Форматируем контакты
+            admin_contact = whois.admin_contact if whois.admin_contact else "Нет данных"
+            tech_contact = whois.tech_contact if whois.tech_contact else "Нет данных"
+            
+            # Форматируем техническую информацию
+            whois_server = whois.whois_server if whois.whois_server else "Нет данных"
+            dnssec = whois.dnssec if whois.dnssec else "Нет данных"
+            
+            # Формируем сообщение с WHOIS информацией
+            whois_info = [
+                f"📝 *WHOIS информация для домена {domain.name}*\n",
+                f"*Регистратор:* {registrar_info}",
+                f"*Статус:* {status_details}",
+                f"*Владелец:* {owner_info}",
+                f"*Дата создания:* {creation_date}",
+                f"*Дата обновления:* {last_updated}",
+                f"*Срок регистрации до:* {expiration_date}",
+                f"*NS серверы:* {nameservers}",
+                f"*Административный контакт:* {admin_contact}",
+                f"*Технический контакт:* {tech_contact}",
+                f"*WHOIS сервер:* {whois_server}",
+                f"*DNSSEC:* {dnssec}",
+                f"*Последняя проверка:* {whois.created_at.strftime('%d.%m.%Y %H:%M:%S')}",
+            ]
+        else:
+            whois_info = [
+                f"📝 *WHOIS информация для домена {domain.name}*\n",
+                "Нет данных WHOIS. Возможно, домен еще не проверялся."
+            ]
+        
+        # Создаем кнопку "Назад"
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text="« Назад к информации о домене",
+                        callback_data=f"details_{domain_id}",
+                    )
+                ],
+            ]
+        )
+        
+        # Отправляем сообщение
+        await callback_query.message.edit_text(
+            "\n".join(whois_info),
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+        await callback_query.answer()
+        
+    async def process_domain_dns(self, callback_query: types.CallbackQuery):
+        """Обработчик просмотра DNS записей."""
+        domain_id = int(callback_query.data.split("_")[1])
+        
+        # Получаем информацию о домене
+        domain = await self.db.get_domain_by_id(domain_id)
+        if not domain:
+            await callback_query.answer("Домен не найден")
+            return
+        
+        logger.info(f"Запрошены DNS записи для домена {domain.name} (ID: {domain_id})")
+        
+        # Напрямую получаем DNS записи из базы данных для отладки
+        async with self.db.async_session() as session:
+            from sqlalchemy import select, desc
+            from src.db.models import DNSRecord
+            
+            # Получаем последние записи для каждого типа
+            query = select(DNSRecord).where(DNSRecord.domain_id == domain_id).order_by(desc(DNSRecord.created_at))
+            result = await session.execute(query)
+            all_records = result.scalars().all()
+            
+            # Группируем записи по типу, оставляя только самые свежие
+            latest_records = {}
+            for record in all_records:
+                if record.record_type not in latest_records:
+                    latest_records[record.record_type] = record
+            
+            logger.debug(f"Найдено {len(latest_records)} уникальных типов DNS записей")
+            
+            # Формируем сообщение с DNS записями
+            dns_info = [f"🌐 *DNS записи для домена {domain.name}*\n"]
+            
+            # Стандартные типы DNS записей, которые мы всегда хотим показать
+            standard_record_types = ["A", "AAAA", "MX", "NS", "CNAME", "TXT", "SOA", "SRV", "PTR"]
+            
+            # Объединяем стандартные типы и имеющиеся типы
+            all_record_types = list(set(standard_record_types) | set(latest_records.keys()))
+            all_record_types.sort()  # Сортируем для единообразия отображения
+            
+            for record_type in all_record_types:
+                if record_type in latest_records:
+                    record = latest_records[record_type]
+                    try:
+                        import json
+                        values = json.loads(record.values)
+                        ttl = record.ttl if record.ttl else "Нет данных"
+                        
+                        logger.debug(f"Обработка записи {record_type}: {values}, TTL={ttl}")
+                        
+                        dns_info.append(f"*Запись {record_type}:*")
+                        if values:
+                            for value in values:
+                                # Экранируем специальные символы Markdown
+                                escaped_value = value.replace("_", "\\_").replace("*", "\\*").replace("[", "\\[").replace("`", "\\`")
+                                dns_info.append(f"  • {escaped_value}")
+                            dns_info.append(f"  TTL: {ttl}\n")
+                        else:
+                            dns_info.append("  • Нет данных\n")
+                    except Exception as e:
+                        logger.error(f"Ошибка при обработке записи {record_type}: {e}")
+                        dns_info.append(f"*Запись {record_type}:*")
+                        dns_info.append(f"  • Ошибка обработки: {e}\n")
+                else:
+                    logger.debug(f"Запись {record_type} не найдена")
+                    # Показываем отсутствующие типы записей
+                    dns_info.append(f"*Запись {record_type}:*")
+                    dns_info.append("  • Не найдена\n")
+            
+            # Получаем текущее время для отображения времени проверки
+            current_time = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            dns_info.append(f"*Последняя проверка:* {current_time}")
+            
+            # Создаем кнопку "Назад"
+            keyboard = types.InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [
+                        types.InlineKeyboardButton(
+                            text="« Назад к информации о домене",
+                            callback_data=f"details_{domain_id}",
+                        )
+                    ],
+                ]
+            )
+            
+            try:
+                # Отправляем сообщение
+                await callback_query.message.edit_text(
+                    "\n".join(dns_info),
+                    parse_mode="Markdown",
+                    reply_markup=keyboard,
+                )
+            except Exception as e:
+                logger.error(f"Ошибка при отображении DNS записей: {e}")
+                # Если возникла ошибка форматирования, отправляем без форматирования
+                await callback_query.message.edit_text(
+                    f"DNS записи для домена {domain.name}\n\n" + 
+                    "Не удалось отобразить записи в форматированном виде.\n" +
+                    "Используйте команду /status для просмотра информации о домене.",
+                    reply_markup=keyboard,
+                )
+            
+            await callback_query.answer()
+        
+    async def process_back_to_list(self, callback_query: types.CallbackQuery):
+        """Обработчик возврата к списку доменов."""
+        # Получаем список доменов пользователя
+        domains = await self.db.get_domains_by_chat(callback_query.from_user.id)
+        
+        if not domains:
+            await callback_query.message.edit_text(
+                "📝 У вас нет отслеживаемых доменов.\n"
+                "Используйте /add чтобы добавить домен."
+            )
+            await callback_query.answer()
+            return
+        
+        # Создаем клавиатуру с кнопками для каждого домена
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    types.InlineKeyboardButton(
+                        text=domain.name,
+                        callback_data=f"details_{domain.id}",
+                    )
+                ]
+                for domain in domains
+            ]
+        )
+        
+        await callback_query.message.edit_text(
+            "📊 *Выберите домен для просмотра подробной информации:*",
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+        await callback_query.answer()
 
     async def cmd_cancel(self, message: types.Message, state: FSMContext):
         """Обработчик команды /cancel."""
