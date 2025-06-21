@@ -2,18 +2,23 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Установка poetry
-RUN pip install poetry==1.7.1
+# Установка московского времени (МСК, UTC+3)
+RUN apt-get update && apt-get install -y tzdata
+ENV TZ=Europe/Moscow
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# Копирование файлов проекта
-COPY pyproject.toml poetry.lock ./
-COPY README.md ./
-
-# Настройка poetry для установки зависимостей в системный Python
-RUN poetry config virtualenvs.create false
-
-# Установка зависимостей
-RUN poetry install --only main --no-interaction --no-ansi
+# Установка только необходимых зависимостей без poetry
+RUN pip install \
+    aiogram==3.4.1 \
+    sqlalchemy==2.0.28 \
+    alembic==1.13.1 \
+    pyyaml==6.0.1 \
+    python-whois==0.8.0 \
+    dnspython==2.6.1 \
+    aiosqlite==0.20.0 \
+    asyncio==3.4.3 \
+    python-dotenv==1.0.1 \
+    tabulate==0.9.0
 
 # Копирование исходного кода
 COPY src/ ./src/

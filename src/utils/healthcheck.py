@@ -54,7 +54,7 @@ async def check_whois_service():
     try:
         whois_checker = WhoisChecker()
         test_domain = "example.com"
-        whois_info = await whois_checker.check_domain(test_domain)
+        whois_info = await whois_checker.get_whois_info(test_domain)
         if whois_info and whois_info.registrar:
             logger.info(
                 f"✅ WHOIS сервис работает. "
@@ -79,7 +79,7 @@ async def check_dns_service():
     try:
         dns_checker = DNSChecker()
         test_domain = "example.com"
-        dns_info = await dns_checker.check_domain(test_domain)
+        dns_info = await dns_checker.get_dns_info(test_domain)
         if dns_info and dns_info.records:
             logger.info(
                 f"✅ DNS сервис работает. "

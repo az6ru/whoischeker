@@ -17,6 +17,7 @@ services:
       - DATABASE_URL=sqlite+aiosqlite:///data/whoischeker.db
       - LOG_LEVEL=INFO
       - LOG_FILE=logs/whoischeker.log
+      - TZ=Europe/Moscow
     healthcheck:
       test: ["CMD", "python", "-m", "src.utils.healthcheck"]
       interval: 30s
