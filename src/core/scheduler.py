@@ -115,12 +115,19 @@ class DomainCheckScheduler:
         
         while not self._stop_event.is_set():
             try:
+                logger.info(f"Запуск проверки для домена {domain.name}")
+                
                 # Получаем последние записи
                 last_whois = await self.db.get_last_whois_record(domain.id)
                 last_dns_records = await self.db.get_last_dns_records(domain.id)
                 
                 # Определяем, первая ли это проверка
-                is_first_check = last_whois is None or last_dns_records is None
+                is_first_check = last_whois is None or not last_dns_records or first_check
+                
+                if is_first_check:
+                    logger.info(f"Первая проверка домена {domain.name}")
+                else:
+                    logger.info(f"Повторная проверка домена {domain.name}")
 
                 # Получаем новые данные
                 new_whois = await self.whois_checker.get_whois_info(domain.name)
@@ -146,14 +153,18 @@ class DomainCheckScheduler:
                         message = format_changes_message(changes)
                         await self.notify_callback(domain.chat_id, message)
                         logger.info(f"Обнаружены изменения для домена {domain.name}")
+                    else:
+                        logger.info(f"Изменений для домена {domain.name} не обнаружено")
                 else:
                     logger.info(f"Первая проверка домена {domain.name}, уведомления не отправляются")
+                    first_check = False  # Сбрасываем флаг первой проверки
 
             except Exception as e:
                 logger.error(f"Ошибка при проверке домена {domain.name}: {e}")
 
             # Ждем до следующей проверки
             try:
+                logger.debug(f"Ожидание {domain.check_interval} секунд до следующей проверки домена {domain.name}")
                 await asyncio.wait_for(
                     self._stop_event.wait(),
                     timeout=domain.check_interval,

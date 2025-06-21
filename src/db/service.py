@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, joinedload
 
@@ -232,7 +232,7 @@ class DatabaseService:
                 registrar_url=record.registrar_url,
                 creation_date=record.creation_date,
                 expiration_date=record.expiration_date,
-                last_updated=record.updated_date,
+                last_updated=record.updated_date,  # Преобразуем updated_date в last_updated
                 status=json.loads(record.status) if record.status else None,
                 name_servers=json.loads(record.name_servers) if record.name_servers else None,
                 emails=json.loads(record.emails) if record.emails else None,
@@ -263,45 +263,57 @@ class DatabaseService:
                 logger.warning(f"Домен с ID {domain_id} не найден")
                 return None
 
-            # Получаем все уникальные типы записей для домена
-            result = await session.execute(
-                select(DNSRecord.record_type)
-                .where(DNSRecord.domain_id == domain_id)
-                .distinct()
-            )
-            record_types = [r[0] for r in result.all()]
-            
-            if not record_types:
-                logger.warning(f"Не найдено DNS записей для домена {domain.name}")
-                return None
-
             # Создаем объект DNS информации
             dns_info = DNSInfo(domain.name)
             
-            # Для каждого типа записи получаем последнюю запись
-            for record_type in record_types:
-                result = await session.execute(
-                    select(DNSRecord)
-                    .where(
-                        DNSRecord.domain_id == domain_id,
-                        DNSRecord.record_type == record_type
-                    )
-                    .order_by(DNSRecord.created_at.desc())
-                    .limit(1)
+            # Получаем последние записи для каждого типа
+            from sqlalchemy import select, func
+            from src.db.models import DNSRecord
+            
+            # Подзапрос для получения максимальной даты создания для каждого типа записи
+            subquery = (
+                select(
+                    DNSRecord.record_type,
+                    func.max(DNSRecord.created_at).label("max_created_at")
                 )
-                record = result.scalar_one_or_none()
-                
-                if record:
-                    try:
-                        values = json.loads(record.values)
-                        logger.debug(f"Загружена DNS запись {record_type}: {values}, TTL={record.ttl}")
-                        dns_info.add_record(
-                            record_type,
-                            values,
-                            record.ttl or 0
-                        )
-                    except Exception as e:
-                        logger.error(f"Ошибка при десериализации DNS записи {record_type}: {e}")
+                .where(DNSRecord.domain_id == domain_id)
+                .group_by(DNSRecord.record_type)
+                .subquery()
+            )
+            
+            # Основной запрос для получения последних записей каждого типа
+            query = (
+                select(DNSRecord)
+                .join(
+                    subquery,
+                    (DNSRecord.record_type == subquery.c.record_type) &
+                    (DNSRecord.created_at == subquery.c.max_created_at)
+                )
+                .where(DNSRecord.domain_id == domain_id)
+            )
+            
+            result = await session.execute(query)
+            records = result.scalars().all()
+            
+            logger.debug(f"Найдено {len(records)} последних DNS записей для домена {domain.name}")
+            
+            # Если записей нет, возвращаем None
+            if not records:
+                logger.warning(f"Не найдено DNS записей для домена {domain.name}")
+                return None
+            
+            # Добавляем записи в объект DNS информации
+            for record in records:
+                try:
+                    values = json.loads(record.values)
+                    logger.debug(f"Загружена DNS запись {record.record_type}: {values}, TTL={record.ttl}")
+                    dns_info.add_record(
+                        record.record_type,
+                        values,
+                        record.ttl or 0
+                    )
+                except Exception as e:
+                    logger.error(f"Ошибка при десериализации DNS записи {record.record_type}: {e}")
             
             logger.debug(f"Типы DNS записей в объекте: {list(dns_info.records.keys())}")
             return dns_info 

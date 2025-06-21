@@ -436,7 +436,7 @@ class WhoisCheckerBot:
             dates_info = []
             if whois_record.creation_date:
                 dates_info.append(f"• Создан: {whois_record.creation_date.strftime('%d.%m.%Y')}")
-            if hasattr(whois_record, 'last_updated') and whois_record.last_updated:
+            if whois_record.last_updated:
                 dates_info.append(f"• Обновлён: {whois_record.last_updated.strftime('%d.%m.%Y')}")
             if whois_record.expiration_date:
                 dates_info.append(f"• Срок окончания: {whois_record.expiration_date.strftime('%d.%m.%Y')}")

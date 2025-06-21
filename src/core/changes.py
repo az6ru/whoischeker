@@ -136,16 +136,10 @@ def compare_dns_records(
 
     # Если это первая проверка
     if not old_info:
-        # Для первой проверки считаем, что все записи новые
-        for record_type, record in new_info.records.items():
-            changes.append(
-                DNSChange(
-                    record_type=record_type,
-                    old_values=[],
-                    new_values=sorted(record.values) if record.values else [],
-                )
-            )
-        return changes
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("Первая проверка DNS записей, изменения не фиксируются")
+        return []
 
     # Сравниваем записи каждого типа
     all_types = set(old_info.records.keys()) | set(new_info.records.keys())
@@ -158,8 +152,13 @@ def compare_dns_records(
         old_record = old_info.records.get(record_type)
         new_record = new_info.records.get(record_type)
 
-        old_values = set(old_record.values) if old_record else set()
-        new_values = set(new_record.values) if new_record else set()
+        # Если записи нет ни в старых, ни в новых данных, пропускаем
+        if not old_record and not new_record:
+            logger.debug(f"Тип записи {record_type}: пропускается, т.к. отсутствует в обоих наборах")
+            continue
+            
+        old_values = set(old_record.values) if old_record and hasattr(old_record, 'values') and old_record.values else set()
+        new_values = set(new_record.values) if new_record and hasattr(new_record, 'values') and new_record.values else set()
 
         # Логируем значения для отладки
         logger.debug(f"Тип записи {record_type}: старые значения: {old_values}, новые значения: {new_values}")
@@ -167,7 +166,9 @@ def compare_dns_records(
         # Проверяем, действительно ли есть изменения
         if old_values != new_values:
             # Добавляем только если значения реально отличаются
-            if not (not old_values and not new_values):  # Пропускаем случай, когда оба множества пустые
+            # и не являются пустыми множествами одновременно
+            if not (not old_values and not new_values):
+                logger.info(f"Обнаружено изменение в записи {record_type}: {old_values} -> {new_values}")
                 changes.append(
                     DNSChange(
                         record_type=record_type,
@@ -175,6 +176,8 @@ def compare_dns_records(
                         new_values=sorted(new_values) if new_values else [],
                     )
                 )
+        else:
+            logger.debug(f"Тип записи {record_type}: без изменений")
 
     return changes
 
