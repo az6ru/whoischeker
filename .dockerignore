@@ -1,0 +1,67 @@
+# Git
+.git/
+.gitignore
+
+# IDE и редакторы
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+
+# Python кэш и временные файлы
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Виртуальные окружения
+env/
+venv/
+ENV/
+.env
+
+# Тесты и анализ кода
+.pytest_cache/
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.mypy_cache/
+
+# Локальные данные и логи
+logs/
+data/*.db
+*.log
+
+# Документация
+docs/
+
+# Другие файлы проекта, ненужные в контейнере
+tests/
+scripts/
+.cursorrules
+env.example
+docker-compose.yml
+.travis.yml 

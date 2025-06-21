@@ -1,0 +1,25 @@
+version: '3'
+
+services:
+  whoischeker:
+    build: .
+    container_name: whoischeker
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # Загрузка переменных окружения из .env файла
+    # Эти переменные имеют приоритет над значениями в config.yml
+    env_file:
+      - .env
+    # Дополнительные переменные окружения, которые имеют наивысший приоритет
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///data/whoischeker.db
+      - LOG_LEVEL=INFO
+      - LOG_FILE=logs/whoischeker.log
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.utils.healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s 
